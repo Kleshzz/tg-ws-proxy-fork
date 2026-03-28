@@ -30,7 +30,9 @@ except ImportError:
     pyperclip = None
 
 import proxy.tg_ws_proxy as tg_ws_proxy
+from proxy.tg_ws_proxy import proxy_config
 from proxy import __version__
+
 from utils.default_config import default_tray_config
 
 APP_NAME = "TgWsProxy"
@@ -271,17 +273,18 @@ def _ask_yes_no_close(text: str,
 
 # Proxy lifecycle
 
-def _run_proxy_thread(port: int, dc_opt: Dict[int, str], verbose: bool,
-                      host: str = '127.0.0.1'):
+def _run_proxy_thread():
     global _async_stop
+
     loop = _asyncio.new_event_loop()
     _asyncio.set_event_loop(loop)
+
     stop_ev = _asyncio.Event()
     _async_stop = (loop, stop_ev)
 
     try:
         loop.run_until_complete(
-            tg_ws_proxy._run(port, dc_opt, stop_event=stop_ev, host=host))
+            tg_ws_proxy._run(stop_event=stop_ev))
     except Exception as exc:
         log.error("Proxy thread crashed: %s", exc)
         if "Address already in use" in str(exc):
@@ -304,27 +307,29 @@ def start_proxy():
     cfg = _config
     port = cfg.get("port", DEFAULT_CONFIG["port"])
     host = cfg.get("host", DEFAULT_CONFIG["host"])
+    secret = cfg.get("secret", DEFAULT_CONFIG["secret"])
     dc_ip_list = cfg.get("dc_ip", DEFAULT_CONFIG["dc_ip"])
-    verbose = cfg.get("verbose", False)
+    buf_kb = cfg.get("buf_kb", DEFAULT_CONFIG["buf_kb"])
+    pool_size = cfg.get("pool_size", DEFAULT_CONFIG["pool_size"])
 
     try:
-        dc_opt = tg_ws_proxy.parse_dc_ip_list(dc_ip_list)
+        dc_redirects = tg_ws_proxy.parse_dc_ip_list(dc_ip_list)
     except ValueError as e:
         log.error("Bad config dc_ip: %s", e)
         _show_error(f"Ошибка конфигурации:\n{e}")
         return
 
-    log.info("Starting proxy on %s:%d ...", host, port)
+    proxy_config.port = port
+    proxy_config.host = host
+    proxy_config.secret = secret
+    proxy_config.dc_redirects = dc_redirects
+    proxy_config.buffer_size = max(4, buf_kb) * 1024
+    proxy_config.pool_size = max(0, pool_size)
 
-    buf_kb = cfg.get("buf_kb", DEFAULT_CONFIG["buf_kb"])
-    pool_size = cfg.get("pool_size", DEFAULT_CONFIG["pool_size"])
-    tg_ws_proxy._RECV_BUF = max(4, buf_kb) * 1024
-    tg_ws_proxy._SEND_BUF = tg_ws_proxy._RECV_BUF
-    tg_ws_proxy._WS_POOL_SIZE = max(0, pool_size)
+    log.info("Starting proxy on %s:%d ...", host, port)
 
     _proxy_thread = threading.Thread(
         target=_run_proxy_thread,
-        args=(port, dc_opt, verbose, host),
         daemon=True, name="proxy")
     _proxy_thread.start()
 
@@ -352,7 +357,9 @@ def restart_proxy():
 def _on_open_in_telegram(_=None):
     host = _config.get("host", DEFAULT_CONFIG["host"])
     port = _config.get("port", DEFAULT_CONFIG["port"])
-    url = f"tg://socks?server={host}&port={port}"
+    secret = _config.get("secret", DEFAULT_CONFIG["secret"])
+
+    url = f"tg://proxy?server={host}&port={port}&secret=dd{secret}"
     log.info("Opening %s", url)
     try:
         result = subprocess.call(['open', url])
@@ -502,6 +509,17 @@ def _edit_config_dialog():
         _show_error("Порт должен быть числом 1-65535")
         return
 
+    # Secret
+    secret_str = _osascript_input(
+        "MTProto Secret (32 hex символа):",
+        cfg.get("secret", DEFAULT_CONFIG["secret"]))
+    if secret_str is None:
+        return
+    secret_str = secret_str.strip().lower()
+    if len(secret_str) != 32 or not all(c in "0123456789abcdef" for c in secret_str):
+        _show_error("Secret должен быть строкой из 32 шестнадцатеричных символов.")
+        return
+
     # DC-IP mappings
     dc_default = ", ".join(cfg.get("dc_ip", DEFAULT_CONFIG["dc_ip"]))
     dc_str = _osascript_input(
@@ -548,6 +566,7 @@ def _edit_config_dialog():
     new_cfg = {
         "host": host,
         "port": port,
+        "secret": secret_str,
         "dc_ip": dc_lines,
         "verbose": verbose,
         "buf_kb": adv.get("buf_kb", cfg.get("buf_kb", DEFAULT_CONFIG["buf_kb"])),
@@ -576,7 +595,9 @@ def _show_first_run():
 
     host = _config.get("host", DEFAULT_CONFIG["host"])
     port = _config.get("port", DEFAULT_CONFIG["port"])
-    tg_url = f"tg://socks?server={host}&port={port}"
+    secret = _config.get("secret", DEFAULT_CONFIG["secret"])
+
+    tg_url = f"tg://proxy?server={host}&port={port}&secret=dd{secret}"
 
     text = (
         f"Прокси запущен и работает в строке меню.\n\n"
@@ -586,7 +607,8 @@ def _show_first_run():
         f"  Или ссылка: {tg_url}\n\n"
         f"Вручную:\n"
         f"  Настройки → Продвинутые → Тип подключения → Прокси\n"
-        f"  SOCKS5 → {host} : {port} (без логина/пароля)\n\n"
+        f"  MTProto → {host} : {port} \n"
+        f"  Secret: dd{secret} \n\n"
         f"Открыть прокси в Telegram сейчас?"
     )
 
@@ -646,9 +668,10 @@ class TgWsProxyApp(_TgWsProxyAppBase):
 
         host = _config.get("host", DEFAULT_CONFIG["host"])
         port = _config.get("port", DEFAULT_CONFIG["port"])
+        link_host = tg_ws_proxy.get_link_host(host)
 
         self._open_tg_item = rumps.MenuItem(
-            f"Открыть в Telegram ({host}:{port})",
+            f"Открыть в Telegram ({link_host}:{port})",
             callback=_on_open_in_telegram)
         self._restart_item = rumps.MenuItem(
             "Перезапустить прокси",
@@ -690,8 +713,10 @@ class TgWsProxyApp(_TgWsProxyAppBase):
     def update_menu_title(self):
         host = _config.get("host", DEFAULT_CONFIG["host"])
         port = _config.get("port", DEFAULT_CONFIG["port"])
+        link_host = tg_ws_proxy.get_link_host(host)
+
         self._open_tg_item.title = (
-            f"Открыть в Telegram ({host}:{port})")
+            f"Открыть в Telegram ({link_host}:{port})")
 
 
 def run_menubar():

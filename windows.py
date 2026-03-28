@@ -37,7 +37,9 @@ except ImportError:
     Image = ImageDraw = ImageFont = None
 
 import proxy.tg_ws_proxy as tg_ws_proxy
+from proxy.tg_ws_proxy import proxy_config
 from proxy import __version__
+
 from utils.default_config import default_tray_config
 from ui.ctk_tray_ui import (
     install_tray_config_buttons,
@@ -50,7 +52,7 @@ from ui.ctk_theme import (
     CONFIG_DIALOG_FRAME_PAD,
     CONFIG_DIALOG_SIZE,
     FIRST_RUN_SIZE,
-    create_ctk_root,
+    create_ctk_toplevel,
     ctk_theme_for_platform,
     main_content_frame,
 )
@@ -75,6 +77,9 @@ _tray_icon: Optional[object] = None
 _config: dict = {}
 _exiting: bool = False
 _lock_file_path: Optional[Path] = None
+
+_ctk_root = None
+_ctk_root_ready = threading.Event()
 
 log = logging.getLogger("tg-ws-tray")
 
@@ -312,17 +317,18 @@ def _load_icon():
 
 
 
-def _run_proxy_thread(port: int, dc_opt: Dict[int, str], verbose: bool,
-                      host: str = '127.0.0.1'):
+def _run_proxy_thread():
     global _async_stop
+
     loop = _asyncio.new_event_loop()
     _asyncio.set_event_loop(loop)
+
     stop_ev = _asyncio.Event()
     _async_stop = (loop, stop_ev)
 
     try:
         loop.run_until_complete(
-            tg_ws_proxy._run(port, dc_opt, stop_event=stop_ev, host=host))
+            tg_ws_proxy._run(stop_event=stop_ev))
     except Exception as exc:
         log.error("Proxy thread crashed: %s", exc)
         if "10048" in str(exc) or "Address already in use" in str(exc):
@@ -341,27 +347,29 @@ def start_proxy():
     cfg = _config
     port = cfg.get("port", DEFAULT_CONFIG["port"])
     host = cfg.get("host", DEFAULT_CONFIG["host"])
+    secret = cfg.get("secret", DEFAULT_CONFIG["secret"])
     dc_ip_list = cfg.get("dc_ip", DEFAULT_CONFIG["dc_ip"])
-    verbose = cfg.get("verbose", False)
+    buf_kb = cfg.get("buf_kb", DEFAULT_CONFIG["buf_kb"])
+    pool_size = cfg.get("pool_size", DEFAULT_CONFIG["pool_size"])
 
     try:
-        dc_opt = tg_ws_proxy.parse_dc_ip_list(dc_ip_list)
+        dc_redirects = tg_ws_proxy.parse_dc_ip_list(dc_ip_list)
     except ValueError as e:
         log.error("Bad config dc_ip: %s", e)
         _show_error(f"Ошибка конфигурации:\n{e}")
         return
 
-    log.info("Starting proxy on %s:%d ...", host, port)
+    proxy_config.port = port
+    proxy_config.host = host
+    proxy_config.secret = secret
+    proxy_config.dc_redirects = dc_redirects
+    proxy_config.buffer_size = max(4, buf_kb) * 1024
+    proxy_config.pool_size = max(0, pool_size)
 
-    buf_kb = cfg.get("buf_kb", DEFAULT_CONFIG["buf_kb"])
-    pool_size = cfg.get("pool_size", DEFAULT_CONFIG["pool_size"])
-    tg_ws_proxy._RECV_BUF = max(4, buf_kb) * 1024
-    tg_ws_proxy._SEND_BUF = tg_ws_proxy._RECV_BUF
-    tg_ws_proxy._WS_POOL_SIZE = max(0, pool_size)
+    log.info("Starting proxy on %s:%d ...", host, port)
 
     _proxy_thread = threading.Thread(
         target=_run_proxy_thread,
-        args=(port, dc_opt, verbose, host),
         daemon=True, name="proxy")
     _proxy_thread.start()
 
@@ -440,10 +448,55 @@ def _maybe_notify_update_async():
     threading.Thread(target=_work, daemon=True, name="update-check").start()
 
 
+def _ensure_ctk_thread() -> bool:
+    """Start the persistent hidden CTk root in its own thread (once)."""
+    global _ctk_root
+    if ctk is None:
+        return False
+    if _ctk_root_ready.is_set():
+        return True
+
+    def _run():
+        global _ctk_root
+        from ui.ctk_theme import (
+            apply_ctk_appearance,
+            _install_tkinter_variable_del_guard,
+        )
+        _install_tkinter_variable_del_guard()
+        apply_ctk_appearance(ctk)
+        _ctk_root = ctk.CTk()
+        _ctk_root.withdraw()
+        _ctk_root_ready.set()
+        _ctk_root.mainloop()
+
+    threading.Thread(target=_run, daemon=True, name="ctk-root").start()
+    _ctk_root_ready.wait(timeout=5.0)
+    return _ctk_root is not None
+
+
+def _ctk_run_dialog(build_fn) -> None:
+    """Schedule build_fn(done_event) on the CTk thread and block until done_event is set."""
+    if _ctk_root is None:
+        return
+    done = threading.Event()
+
+    def _invoke():
+        try:
+            build_fn(done)
+        except Exception:
+            log.exception("CTk dialog failed")
+            done.set()
+
+    _ctk_root.after(0, _invoke)
+    done.wait()
+
+
 def _on_open_in_telegram(icon=None, item=None):
     host = _config.get("host", DEFAULT_CONFIG["host"])
     port = _config.get("port", DEFAULT_CONFIG["port"])
-    url = f"tg://socks?server={host}&port={port}"
+    secret = _config.get("secret", DEFAULT_CONFIG["secret"])
+    
+    url = f"tg://proxy?server={host}&port={port}&secret=dd{secret}"
     log.info("Opening %s", url)
     try:
         result = webbrowser.open(url)
@@ -476,96 +529,84 @@ def _on_edit_config(icon=None, item=None):
 
 
 def _edit_config_dialog():
-    if ctk is None:
+    if not _ensure_ctk_thread():
         _show_error("customtkinter не установлен.")
         return
 
     cfg = dict(_config)
     cfg["autostart"] = is_autostart_enabled()
-
-    # Make sure that the autostart key is removed if autostart
-    # is disabled, even if the executable file is moved.
     if _supports_autostart() and not cfg["autostart"]:
         set_autostart_enabled(False)
 
-    theme = ctk_theme_for_platform()
-    w, h = CONFIG_DIALOG_SIZE
-    if _supports_autostart():
-        h += 100
-
-    icon_path = str(Path(__file__).parent / "icon.ico")
-
-    root = create_ctk_root(
-        ctk,
-        title="TG WS Proxy — Настройки",
-        width=w,
-        height=h,
-        theme=theme,
-        after_create=lambda r: r.iconbitmap(icon_path),
-    )
-
-    fpx, fpy = CONFIG_DIALOG_FRAME_PAD
-    frame = main_content_frame(ctk, root, theme, padx=fpx, pady=fpy)
-
-    scroll, footer = tray_settings_scroll_and_footer(ctk, frame, theme)
-
-    widgets = install_tray_config_form(
-        ctk,
-        scroll,
-        theme,
-        cfg,
-        DEFAULT_CONFIG,
-        show_autostart=_supports_autostart(),
-        autostart_value=cfg.get("autostart", False),
-    )
-
-    def on_save():
-        merged = validate_config_form(
-            widgets,
-            DEFAULT_CONFIG,
-            include_autostart=_supports_autostart(),
-        )
-        if isinstance(merged, str):
-            _show_error(merged)
-            return
-
-        new_cfg = merged
-        save_config(new_cfg)
-        _config.update(new_cfg)
-        log.info("Config saved: %s", new_cfg)
-
+    def _build(done: threading.Event):
+        theme = ctk_theme_for_platform()
+        w, h = CONFIG_DIALOG_SIZE
         if _supports_autostart():
-            set_autostart_enabled(bool(new_cfg.get("autostart", False)))
+            h += 100
 
-        _tray_icon.menu = _build_menu()
+        icon_path = str(Path(__file__).parent / "icon.ico")
+        root = create_ctk_toplevel(
+            ctk,
+            title="TG WS Proxy — Настройки",
+            width=w,
+            height=h,
+            theme=theme,
+            after_create=lambda r: r.iconbitmap(icon_path),
+        )
 
-        # Win32 MessageBox из того же потока, что и mainloop CTk, блокирует обработку Tcl/Tk
-        # и даёт зависание; tkinter.messagebox согласован с циклом окна.
-        from tkinter import messagebox
-        if messagebox.askyesno("Перезапустить?",
-                               "Настройки сохранены.\n\n"
-                               "Перезапустить прокси сейчас?",
-                               parent=root):
+        fpx, fpy = CONFIG_DIALOG_FRAME_PAD
+        frame = main_content_frame(ctk, root, theme, padx=fpx, pady=fpy)
+        scroll, footer = tray_settings_scroll_and_footer(ctk, frame, theme)
+        widgets = install_tray_config_form(
+            ctk,
+            scroll,
+            theme,
+            cfg,
+            DEFAULT_CONFIG,
+            show_autostart=_supports_autostart(),
+            autostart_value=cfg.get("autostart", False),
+        )
+
+        def _finish():
             root.destroy()
-            restart_proxy()
-        else:
-            root.destroy()
+            done.set()
 
-    def on_cancel():
-        root.destroy()
+        def on_save():
+            merged = validate_config_form(
+                widgets,
+                DEFAULT_CONFIG,
+                include_autostart=_supports_autostart(),
+            )
+            if isinstance(merged, str):
+                _show_error(merged)
+                return
 
-    install_tray_config_buttons(
-        ctk, footer, theme, on_save=on_save, on_cancel=on_cancel)
+            new_cfg = merged
+            save_config(new_cfg)
+            _config.update(new_cfg)
+            log.info("Config saved: %s", new_cfg)
+            if _supports_autostart():
+                set_autostart_enabled(bool(new_cfg.get("autostart", False)))
+            _tray_icon.menu = _build_menu()
 
-    try:
-        root.mainloop()
-    finally:
-        import tkinter as tk
-        try:
-            if root.winfo_exists():
-                root.destroy()
-        except tk.TclError:
-            pass
+            from tkinter import messagebox
+            do_restart = messagebox.askyesno(
+                "Перезапустить?",
+                "Настройки сохранены.\n\nПерезапустить прокси сейчас?",
+                parent=root)
+            _finish()
+            if do_restart:
+                threading.Thread(
+                    target=restart_proxy, daemon=True).start()
+
+        def on_cancel():
+            _finish()
+
+        root.protocol("WM_DELETE_WINDOW", on_cancel)
+        install_tray_config_buttons(
+            ctk, footer, theme, on_save=on_save, on_cancel=on_cancel)
+
+    _ctk_run_dialog(_build)
 
 
 def _on_open_logs(icon=None, item=None):
@@ -584,6 +625,12 @@ def _on_exit(icon=None, item=None):
     _exiting = True
     log.info("User requested exit")
 
+    if _ctk_root is not None:
+        try:
+            _ctk_root.after(0, _ctk_root.quit)
+        except Exception:
+            pass
+
     def _force_exit():
         time.sleep(3)
         os._exit(0)
@@ -593,49 +640,43 @@ def _on_exit(icon=None, item=None):
         icon.stop()
 
 
-
 def _show_first_run():
     _ensure_dirs()
     if FIRST_RUN_MARKER.exists():
         return
-
-    host = _config.get("host", DEFAULT_CONFIG["host"])
-    port = _config.get("port", DEFAULT_CONFIG["port"])
-
-    if ctk is None:
+    if not _ensure_ctk_thread():
         FIRST_RUN_MARKER.touch()
         return
 
-    theme = ctk_theme_for_platform()
-    icon_path = str(Path(__file__).parent / "icon.ico")
-    w, h = FIRST_RUN_SIZE
-    root = create_ctk_root(
-        ctk,
-        title="TG WS Proxy",
-        width=w,
-        height=h,
-        theme=theme,
-        after_create=lambda r: r.iconbitmap(icon_path),
-    )
+    host = _config.get("host", DEFAULT_CONFIG["host"])
+    port = _config.get("port", DEFAULT_CONFIG["port"])
+    secret = _config.get("secret", DEFAULT_CONFIG["secret"])
 
-    def on_done(open_tg: bool):
-        FIRST_RUN_MARKER.touch()
-        root.destroy()
-        if open_tg:
-            _on_open_in_telegram()
+    def _build(done: threading.Event):
+        theme = ctk_theme_for_platform()
+        icon_path = str(Path(__file__).parent / "icon.ico")
+        w, h = FIRST_RUN_SIZE
+        root = create_ctk_toplevel(
+            ctk,
+            title="TG WS Proxy",
+            width=w,
+            height=h,
+            theme=theme,
+            after_create=lambda r: r.iconbitmap(icon_path),
+        )
 
-    populate_first_run_window(
-        ctk, root, theme, host=host, port=port, on_done=on_done)
+        def on_done(open_tg: bool):
+            FIRST_RUN_MARKER.touch()
+            root.destroy()
+            done.set()
+            if open_tg:
+                _on_open_in_telegram()
 
-    try:
-        root.mainloop()
-    finally:
-        import tkinter as tk
-        try:
-            if root.winfo_exists():
-                root.destroy()
-        except tk.TclError:
-            pass
+        populate_first_run_window(
+            ctk, root, theme, host=host, port=port, secret=secret,
+            on_done=on_done)
+
+    _ctk_run_dialog(_build)
 
 
 def _has_ipv6_enabled() -> bool:
@@ -695,9 +736,11 @@ def _build_menu():
         return None
     host = _config.get("host", DEFAULT_CONFIG["host"])
     port = _config.get("port", DEFAULT_CONFIG["port"])
+    link_host = tg_ws_proxy.get_link_host(host)
+
     return pystray.Menu(
         pystray.MenuItem(
-            f"Открыть в Telegram ({host}:{port})",
+            f"Открыть в Telegram ({link_host}:{port})",
             _on_open_in_telegram,
             default=True),
         pystray.Menu.SEPARATOR,

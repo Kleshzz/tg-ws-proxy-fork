@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import webbrowser
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -22,12 +23,15 @@ from ui.ctk_tooltip import attach_ctk_tooltip, attach_tooltip_to_widgets
 
 # Подсказки для формы настроек (новые пользователи)
 _TIP_HOST = (
-    "Адрес, на котором прокси принимает SOCKS5-подключения.\n"
+    "Адрес, на котором прокси принимает подключения.\n"
     "Обычно 127.0.0.1 — локальная сеть, 0.0.0.0 - все интерфейсы"
 )
 _TIP_PORT = (
-    "Порт SOCKS5. В Telegram Desktop в настройках прокси должен быть "
+    "Порт прокси. В Telegram Desktop в настройках прокси должен быть "
     "указан тот же порт"
+)
+_TIP_SECRET = (
+    "Секретный ключ для авторизации клиентов\n"
 )
 _TIP_DC = (
     "Соответствие номера датацентра Telegram (DC) и IP-адреса сервера.\n"
@@ -120,6 +124,7 @@ def _config_section(
 class TrayConfigFormWidgets:
     host_var: Any
     port_var: Any
+    secret_var: Any
     dc_textbox: Any
     verbose_var: Any
     adv_entries: List[Any]
@@ -158,7 +163,7 @@ def install_tray_config_form(
 
     inner_w = _CONFIG_FORM_INNER_WIDTH
 
-    conn = _config_section(ctk, frame, theme, "Подключение SOCKS5")
+    conn = _config_section(ctk, frame, theme, "Подключение MTProto")
 
     host_row = ctk.CTkFrame(conn, fg_color="transparent")
     host_row.pack(fill="x")
@@ -214,6 +219,57 @@ def install_tray_config_form(
     )
     port_entry.pack(anchor="w")
     attach_tooltip_to_widgets([port_lbl, port_entry, port_col], _TIP_PORT)
+
+    secret_row = ctk.CTkFrame(conn, fg_color="transparent")
+    secret_row.pack(fill="x")
+
+    secret_col = ctk.CTkFrame(secret_row, fg_color="transparent")
+    secret_col.pack(side="left", fill="x", expand=True, padx=(0, 10))
+    secret_lbl = ctk.CTkLabel(
+        secret_col,
+        text="Secret",
+        font=(theme.ui_font_family, 12),
+        text_color=theme.text_secondary,
+        anchor="w",
+    )
+    secret_lbl.pack(anchor="w", pady=(0, 2))
+    secret_var = ctk.StringVar(value=cfg.get("secret", default_config["secret"]))
+    secret_entry = ctk.CTkEntry(
+        secret_col,
+        textvariable=secret_var,
+        width=160,
+        height=36,
+        font=(theme.ui_font_family, 13),
+        corner_radius=10,
+        fg_color=theme.bg,
+        border_color=theme.field_border,
+        border_width=1,
+        text_color=theme.text_primary,
+    )
+    secret_entry.pack(fill="x", pady=(0, 0))
+    attach_tooltip_to_widgets([secret_lbl, secret_entry, secret_col], _TIP_SECRET)
+
+    regen_col = ctk.CTkFrame(secret_row, fg_color="transparent")
+    regen_col.pack(side="left", anchor="s")
+    ctk.CTkLabel(
+        regen_col,
+        text="",
+        font=(theme.ui_font_family, 12),
+    ).pack(pady=(0, 2))
+    ctk.CTkButton(
+        regen_col,
+        text="↺",
+        width=36,
+        height=36,
+        font=(theme.ui_font_family, 18),
+        corner_radius=10,
+        fg_color=theme.tg_blue,
+        hover_color=theme.tg_blue_hover,
+        text_color="#ffffff",
+        border_width=1,
+        border_color=theme.field_border,
+        command=lambda: secret_var.set(os.urandom(16).hex()),
+    ).pack()
 
     dc_inner = _config_section(ctk, frame, theme, "Датацентры Telegram (DC → IP)")
     dc_lbl = ctk.CTkLabel(
@@ -395,6 +451,7 @@ def install_tray_config_form(
     return TrayConfigFormWidgets(
         host_var=host_var,
         port_var=port_var,
+        secret_var=secret_var,
         dc_textbox=dc_textbox,
         verbose_var=verbose_var,
         adv_entries=adv_entries,
@@ -459,6 +516,7 @@ def validate_config_form(
     new_cfg: Dict[str, Any] = {
         "host": host_val,
         "port": port_val,
+        "secret": widgets.secret_var.get().strip(),
         "dc_ip": lines,
         "verbose": widgets.verbose_var.get(),
     }
@@ -517,12 +575,13 @@ def populate_first_run_window(
     *,
     host: str,
     port: int,
+    secret: str,
     on_done: Callable[[bool], None],
 ) -> None:
     """
     Содержимое окна первого запуска. on_done(open_in_telegram) — по «Начать» и по закрытию окна.
     """
-    tg_url = f"tg://socks?server={host}&port={port}"
+    tg_url = f"tg://proxy?server={host}&port={port}&secret=dd{secret}"
     fpx, fpy = FIRST_RUN_FRAME_PAD
     frame = main_content_frame(ctk, root, theme, padx=fpx, pady=fpy)
 
@@ -544,7 +603,8 @@ def populate_first_run_window(
         (f"  Или ссылка: {tg_url}", False),
         ("\n  Вручную:", True),
         ("  Настройки → Продвинутые → Тип подключения → Прокси", False),
-        (f"  SOCKS5 → {host} : {port} (без логина/пароля)", False),
+        (f"  MTProto → {host} : {port}", False),
+        (f"  Secret: dd{secret}", False),
     ]
 
     for text, bold in sections:

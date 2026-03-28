@@ -99,6 +99,30 @@ def create_ctk_root(
     return root
 
 
+def create_ctk_toplevel(
+    ctk: Any,
+    *,
+    title: str,
+    width: int,
+    height: int,
+    theme: CtkTheme,
+    topmost: bool = True,
+    after_create: Optional[Callable[[Any], None]] = None,
+) -> Any:
+    root = ctk.CTkToplevel()
+    root.title(title)
+    root.resizable(False, False)
+    center_ctk_geometry(root, width, height)
+    root.configure(fg_color=theme.bg)
+    if topmost:
+        root.attributes("-topmost", True)
+    root.lift()
+    root.focus_force()
+    if after_create:
+        after_create(root)
+    return root
+
+
 def main_content_frame(
     ctk: Any,
     root: Any,
