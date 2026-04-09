@@ -26,7 +26,7 @@ if __name__ == '__main__' and (__package__ is None or __package__ == ''):
 from .utils import *
 from .stats import stats
 from .config import proxy_config, parse_dc_ip_list, start_cfproxy_domain_refresh, CFPROXY_DEFAULT_DOMAINS
-from .bridge import MsgSplitter, do_fallback, bridge_ws_reencrypt
+from .bridge import MsgSplitter, CryptoCtx, do_fallback, bridge_ws_reencrypt
 from .raw_websocket import RawWebSocket, WsHandshakeError, set_sock_opts
 
 
@@ -291,6 +291,8 @@ async def _handle_client(reader, writer, secret: bytes):
         
         tg_encryptor.update(ZERO_64)
 
+        ctx = CryptoCtx(clt_decryptor, clt_encryptor, tg_encryptor, tg_decryptor)
+
         dc_key = f'{dc}{"m" if is_media else ""}'
         media_tag = " media" if is_media else ""
 
@@ -310,9 +312,7 @@ async def _handle_client(reader, writer, secret: bytes):
             ok = await do_fallback(
                 reader, writer, relay_init, label,
                 dc, is_media, media_tag,
-                clt_decryptor, clt_encryptor,
-                tg_encryptor, tg_decryptor,
-                splitter=splitter)
+                ctx, splitter=splitter)
             if not ok:
                 log.warning("[%s] DC%d%s no fallback available",
                             label, dc, media_tag)
@@ -382,9 +382,7 @@ async def _handle_client(reader, writer, secret: bytes):
             ok = await do_fallback(
                 reader, writer, relay_init, label,
                 dc, is_media, media_tag,
-                clt_decryptor, clt_encryptor,
-                tg_encryptor, tg_decryptor,
-                splitter=splitter_fb)
+                ctx, splitter=splitter_fb)
             if ok:
                 log.info("[%s] DC%d%s fallback closed",
                          label, dc, media_tag)
@@ -405,11 +403,7 @@ async def _handle_client(reader, writer, secret: bytes):
 
         await bridge_ws_reencrypt(reader, writer, ws, label,
                                    dc=dc, is_media=is_media,
-                                   clt_decryptor=clt_decryptor,
-                                   clt_encryptor=clt_encryptor,
-                                   tg_encryptor=tg_encryptor,
-                                   tg_decryptor=tg_decryptor,
-                                   splitter=splitter)
+                                   ctx=ctx, splitter=splitter)
 
     except asyncio.TimeoutError:
         log.warning("[%s] timeout during handshake", label)
