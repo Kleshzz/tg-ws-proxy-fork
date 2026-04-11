@@ -16,7 +16,7 @@ CFPROXY_DOMAINS_URL = (
     "/.github/cfproxy-domains.txt"
 )
 
-_CFPROXY_ENC: List[str] = ['virkgj.com']
+_CFPROXY_ENC: List[str] = ['virkgj.com', 'vmmzovy.com', 'mkuosckvso.com', 'zaewayzmplad.com', 'twdmbzcm.com']
 _S = ''.join(chr(c) for c in (46, 99, 111, 46, 117, 107))
 
 

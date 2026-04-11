@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from proxy import __version__, get_link_host, parse_dc_ip_list
-from proxy.config import CFPROXY_DEFAULT_DOMAINS
+from proxy.config import proxy_config
 from utils.update_check import RELEASES_PAGE_URL, get_status
 
 
@@ -121,13 +121,19 @@ def _run_cfproxy_connectivity_test(domain: str) -> dict:
 
 
 def _run_cfproxy_auto_test(domains: list) -> tuple:
-    last: dict = {}
-    for domain in domains:
+    merged: dict = {}
+    best_domain = None
+    for domain in reversed(domains):
         res = _run_cfproxy_connectivity_test(domain)
-        last = res
-        if any(v is True for v in res.values()):
+        if all(v is True for v in res.values()):
             return domain, res
-    return None, last
+        for dc, v in res.items():
+            if v is True:
+                merged[dc] = True
+                best_domain = domain
+            elif dc not in merged:
+                merged[dc] = v
+    return best_domain, merged
 
 
 def _cfproxy_show_test_results(domain: str, results: dict) -> None:
@@ -445,7 +451,7 @@ def install_tray_config_form(
             _threading.Thread(target=_worker, daemon=True).start()
         else:
             def _worker_auto():
-                ok_domain, res = _run_cfproxy_auto_test(CFPROXY_DEFAULT_DOMAINS)
+                ok_domain, res = _run_cfproxy_auto_test(proxy_config.cfproxy_domains)
                 if btn:
                     btn.after(0, lambda: btn.configure(text="Тест", state="normal"))
                     btn.after(0, lambda: _cfproxy_show_auto_test_results(ok_domain, res))
