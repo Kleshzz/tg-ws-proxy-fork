@@ -21,7 +21,7 @@
 
 # TG WS Proxy
 
-**Локальный MTProto-прокси** для Telegram Desktop, который **ускоряет работу Telegram**, перенаправляя трафик через WebSocket-соединения. Данные передаются в том же зашифрованном виде, а для работы не нужны сторонние сервера.
+**Локальный MTProto-прокси** для Telegram Desktop, который **ускоряет работу Telegram**, перенаправляя трафик через WebSocket-соединения. Данные передаются в том же зашифрованном виде, а для работы не нужны сторонние серверы.
 
 <img width="529" height="487" alt="image" src="https://github.com/user-attachments/assets/6a4cf683-0df8-43af-86c1-0e8f08682b62" />
 
@@ -34,13 +34,13 @@ Telegram Desktop → MTProto Proxy (127.0.0.1:1443) → WebSocket → Telegram D
 1. Приложение поднимает MTProto прокси на `127.0.0.1:1443`
 2. Перехватывает подключения к IP-адресам Telegram
 3. Извлекает DC ID из MTProto obfuscation init-пакета
-4. Устанавливает WebSocket (TLS) соединение к соответствующему DC через домены Telegram
+4. Устанавливает WebSocket-соединение (TLS) к соответствующему DC через домены Telegram
 5. Если WS недоступен (302 redirect) — автоматически переключается на CfProxy / прямое TCP-соединение
 
 > [!IMPORTANT] 
 > ### Не грузит фото/видео?
 > **Удалите в настройках прокси в DC->IP всё, кроме `4:149.154.167.220`**  
-> **Если не помогло, то удалите вообще всё из этого поля**  
+> **Если не помогло, то полностью очистите это поле**  
 > ####
 > Подобная проблема встречается на аккаунтах без Premium  
 > Если вам не помогло, то настраивайте свой домен по гайду отсюда: https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfProxy.md
@@ -49,20 +49,20 @@ Telegram Desktop → MTProto Proxy (127.0.0.1:1443) → WebSocket → Telegram D
 
 ### Windows
 
-Перейдите на [страницу релизов](https://github.com/Flowseal/tg-ws-proxy/releases) и скачайте **`TgWsProxy_windows.exe`**. Он собирается автоматически через [Github Actions](https://github.com/Flowseal/tg-ws-proxy/actions) из открытого исходного кода.
+Перейдите на [страницу релизов](https://github.com/Flowseal/tg-ws-proxy/releases) и скачайте **`TgWsProxy_windows.exe`**. Он собирается автоматически через [GitHub Actions](https://github.com/Flowseal/tg-ws-proxy/actions) из открытого исходного кода.
 
 При первом запуске откроется окно с инструкцией по подключению Telegram Desktop. Приложение сворачивается в системный трей.
 
 **Меню трея:**
 
-- **Открыть в Telegram** — автоматически настроить прокси через `tg://proxy` ссылку
+- **Открыть в Telegram** — автоматически настроить прокси через ссылку `tg://proxy`
 - **Скопировать ссылку** — скопировать ссылку для подключения
 - **Перезапустить прокси** — перезапуск без выхода из приложения
-- **Настройки...** — GUI-редактор конфигурации (в т.ч. версия приложения, опциональная проверка обновлений с GitHub)
+- **Настройки...** — GUI-редактор конфигурации (версия приложения, опциональная проверка обновлений с GitHub)
 - **Открыть логи** — открыть файл логов
 - **Выход** — остановить прокси и закрыть приложение
 
-При первом запуске после старта может появиться запрос об открытии страницы релиза, если на GitHub вышла новая версия (отключается в настройках).
+При первом запуске после старта может появиться запрос об открытии страницы релиза, если на GitHub вышла новая версия (эту проверку можно отключить в настройках).
 
 ### Настройка Telegram Desktop
 
@@ -71,7 +71,7 @@ Telegram Desktop → MTProto Proxy (127.0.0.1:1443) → WebSocket → Telegram D
 ПКМ по иконке в трее → **«Открыть в Telegram»**  
 Если не сработало (не открылся Telegram с подключением), то:
 1. ПКМ по иконке в трее → **«Скопировать ссылку»** 
-2. Отправьте ссылку себе в избранное в Telegram клиенте и нажмите по ней ЛКМ
+2. Отправьте ссылку себе в избранное в Telegram-клиенте и нажмите по ней ЛКМ
 3. Подключитесь
 
 ### Вручную:
@@ -96,7 +96,7 @@ Telegram Desktop → MTProto Proxy (127.0.0.1:1443) → WebSocket → Telegram D
 
 Для Debian/Ubuntu скачайте со [страницы релизов](https://github.com/Flowseal/tg-ws-proxy/releases) пакет **`TgWsProxy_linux_amd64.deb`**.
 
-Для Arch и Arch-Based дистрибутивов подготовлены пакеты в AUR: [tg-ws-proxy-bin](https://aur.archlinux.org/packages/tg-ws-proxy-bin), [tg-ws-proxy-git](https://aur.archlinux.org/packages/tg-ws-proxy-git), [tg-ws-proxy-cli](https://aur.archlinux.org/packages/tg-ws-proxy-cli)
+Для Arch и Arch-based дистрибутивов подготовлены пакеты в AUR: [tg-ws-proxy-bin](https://aur.archlinux.org/packages/tg-ws-proxy-bin), [tg-ws-proxy-git](https://aur.archlinux.org/packages/tg-ws-proxy-git), [tg-ws-proxy-cli](https://aur.archlinux.org/packages/tg-ws-proxy-cli)
 
 ```shell
 # Установка без AUR-helper
@@ -107,7 +107,7 @@ makepkg -si
 # При помощи AUR-helper
 paru -S tg-ws-proxy-bin
 
-# Если вы установили -cli пакет, то запуск осуществляется через systemctl, где 8888 это номер порта,
+# Если вы установили -cli пакет, то запуск осуществляется через systemctl, где 8888 - это номер порта,
 # разделитель ":" и secret, который можно сгенерировать командой: openssl rand -hex 16
 sudo systemctl start tg-ws-proxy@8888:3075abe65830f0325116bb0416cadf9f
 ```
@@ -165,16 +165,16 @@ tg-ws-proxy [--port PORT] [--host HOST] [--dc-ip DC:IP ...] [-v]
 |---|---|---|
 | `--port` | `1443` | Порт прокси |
 | `--host` | `127.0.0.1` | Хост прокси |
-| `--secret` | `random` | 32 hex chars secret для авторизации клиентов |
+| `--secret` | `random` | 32-значный hex-ключ для авторизации клиентов |
 | `--dc-ip` | `2:149.154.167.220`, `4:149.154.167.220` | Целевой IP для DC (можно указать несколько раз) |
-| `--no-cfproxy` | `false` | Отключить попытку [проксирования через Cloudflare]((https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfProxy.md)) |
+| `--no-cfproxy` | `false` | Отключить попытку [проксирования через Cloudflare](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfProxy.md) |
 | `--cfproxy-domain` | | Указать свой домен для проксирования через Cloudflare. [Подробнее тут](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfProxy.md) |
 | `--cfproxy-priority` | `true` | Пробовать проксировать через Cloudflare перед прямым TCP подключением |
 | `--fake-tls-domain` | | Включить Fake TLS (ee-secret) маскировку с указанным SNI-доменом |
 | `--proxy-protocol` | выкл. | Принимать HAProxy PROXY protocol v1 (для работы за nginx/haproxy с `proxy_protocol on`) |
 | `--buf-kb` | `256` | Размер буфера в КБ |
 | `--pool-size` | `4` | Количество заготовленных соединений на каждый DC |
-| `--log-file` | выкл. | Путь до файла, в который сохранять логи  |
+| `--log-file` | выкл. | Путь к файлу, в который будут сохраняться логи |
 | `--log-max-mb` | `5` | Максимальный размер файла логов в МБ (после идёт перезапись) |
 | `--log-backups` | `0` | Количество сохранений логов после перезаписи |
 | `-v`, `--verbose` | выкл. | Подробное логирование (DEBUG) |
@@ -241,7 +241,7 @@ python3 proxy/tg_ws_proxy.py \
   --secret <32-hex-chars>
 ```
 
-Ссылка для подключения будет в формате `ee`-секрета:</p>
+Ссылка для подключения будет в формате `ee`-секрета:
 
 ```
 tg://proxy?server=your.domain.com&port=443&secret=ee<secret><domain_hex>
